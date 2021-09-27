@@ -1,0 +1,157 @@
+---
+title: "HW 4  607 Fall 2021- Vaccination"
+author: "Mark Schmalfeld"
+date: "9/26/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r library}
+
+library(curl)
+library(tidyverse)
+library(stringr)
+library(ggplot2)
+
+
+summary(cars)
+```
+
+set up and look at df
+
+
+```{r}
+
+# Github address for csv file
+#https://raw.githubusercontent.com/schmalmr/607-Fall-2021/main/israeli_vaccination_data_analysis_startcsv.csv
+
+# target column names list for start up of project
+#col_names = c("age","not_vax_population","fully_vax_population","case_not_vax_100k", "case_fully_vax_100K","efficacy_severe_disease"),
+
+urlfile<-"https://raw.githubusercontent.com/schmalmr/607-Fall-2021/main/israeli_vaccination_data_analysis_startcsv.csv" 
+
+
+# vax file holds the full set of text information
+vax <- read_csv(url(urlfile), col_names= c("age","not_vax_population","fully_vax_population","case_not_vax_100k", "case_fully_vax_100K","efficacy_severe_disease"))
+vax<-as_tibble(vax)
+
+# Atempt to import and rename and adjust column to target data type - loss of some of the text data and this was retained in vax
+vaxnum <- read_csv(url(urlfile), col_names=   c("age","not_vax_population","fully_vax_population","case_not_vax_100k", "case_fully_vax_100K","efficacy_severe_disease"), cols ( 
+   age = col_character(),
+   not_vax_population = col_number(),
+   fully_vax_population = col_number(),
+   case_not_vax_100k = col_number(),
+   case_fully_vax_100K = col_number(),
+   efficacy_severe_disease = col_character()))
+ 
+vaxnum<-as.tibble(vaxnum)
+view(vaxnum)
+glimpse(vaxnum)
+
+
+
+
+```
+
+
+
+```{r}
+
+
+
+vaxnum<-mutate(vaxnum,key=1:16)
+#vaxnum<-rename(vaxnum, "text_description"="Age",  "not_vax_population"="Population %", "fully_vax_population"=3, "case_not_vax_100K"="Severe Cases", "case_fully_vax_100K"= 5, "efficacy_severe_disease"= "Efficacy")
+vaxnum<-mutate(vaxnum,"agenum"=age)
+
+#Setup column for non vax and fully vax percent
+vaxnum<-mutate(vaxnum, "nvp_pct"= not_vax_population)
+vaxnum<-mutate(vaxnum, "fvp_pct"= fully_vax_population)
+
+#filter to select target roles and add a lag column to include age with the percent nvp and fvp
+vaxnum<-filter(vaxnum,key<=6)
+vaxnum<-filter(vaxnum, key>2)
+vaxnum<-mutate(vaxnum,lag(agenum,n=1))
+vaxnum<-rename(vaxnum, "agenum_percent"= `lag(agenum, n = 1)`)
+
+glimpse(vaxnum)
+
+
+```
+
+```{r}
+
+#Create two identical files to start filtering
+vaxnum1<-vaxnum
+vaxnum2<-vaxnum
+
+#Filter to combine the specific columns with the ages
+vaxnum1<-vaxnum1 %>% filter(grepl('50', age))
+vaxnum2<-vaxnum2 %>% filter(grepl('50', agenum_percent))
+
+vaxnum1<-select(vaxnum1,age, not_vax_population,fully_vax_population,case_not_vax_100k, case_fully_vax_100K)
+vaxnum2<-select (vaxnum2,nvp_pct, fvp_pct,agenum_percent)
+vaxnum2<-rename(vaxnum2,"age"="agenum_percent")
+
+#Join columns using the age >50 or <50
+vaxnum_final<-full_join(vaxnum1,vaxnum2, by="age",copy_FALSE,suffix=c("age","agenum_percent"))
+
+tibble(vaxnum_final)
+
+vaxnum_final$not_vax_population <- as.numeric(vaxnum_final$not_vax_population)
+
+glimpse(vaxnum_final)
+
+
+
+```
+```{r questions}
+#Q1
+#Calculate the population.  We can estimate the population elgible for the vaccine as the population of interest in this study.  The population of those 12 and under are not elgible for vaccine in Israel - so we are missing approx 25% of the population. (0-14 years is approx 27.8% of the total population)
+vaxnum_final<- mutate(vaxnum_final,nvp_pct1=nvp_pct/100)
+vaxnum_final<- mutate(vaxnum_final,fvp_pct1=fvp_pct/100)
+vaxnum_final<- mutate(vaxnum_final, population= not_vax_population/nvp_pct1+fully_vax_population/fvp_pct1)
+view(vaxnum_final)
+
+# Population is approx 75% of the total population
+(population_vax<-sum(vaxnum_final$population))
+
+
+# Total population estimate at population_vax/(1-% not eligible for vax)
+not_elgible=0.25
+(total_population=population_vax/(1-not_elgible))
+# Total population is approx 19 Million based on these estimate.
+
+#Q2
+#Calcualate the efficacy vs Disease
+
+vaxnum_final<- mutate(vaxnum_final,Eff_Dis=1.0-(case_fully_vax_100K)/(case_not_vax_100k))
+
+glimpse(vaxnum_final)
+ 
+# For those less than 50 yr of age the efficacy vs disease indicates the severe cases are higher for the non-vacinated and it seems to be more effecitve for the younger age <50.  For the cases >50 yr of age the fully vacinated severe cases are higher than for the unvacainated - but also a greater percentage are vacinated.  The likely cause may be related to the older >50 yr group having other higher risk factors so even when vacinated they are still at risk and if they recieve vacinations first then the effectiveness may be declining.
+
+#Q3
+# No - the direct comparison of just vacination or no vaccination is not sufficient to provide the indication of the potential to have a severe case of Covid.  There appear to be other factors to consider in the analysis. (age is the one factor we have available but there could be others that are not included in this analysis making it risky to make such a one sided conclusion)
+
+                     
+```
+
+
+
+
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
